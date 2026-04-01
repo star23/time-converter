@@ -1,0 +1,40 @@
+Short description (132 chars):
+Auto-converts time mentions (9PM ET, 3:00 PM PST) on web pages to your local timezone. DST-aware with IANA timezone database.
+
+---
+
+Detailed description:
+
+Time Zone Converter automatically detects time mentions on web pages and shows the converted time in your local timezone — right next to the original text.
+
+✦ HOW IT WORKS
+When you browse pages like X (Twitter), news sites, or forums, the extension scans for time expressions such as "9PM ET", "3:00 PM PST", "15:00 GMT", or "9PM London time", and displays a small blue badge with the equivalent time in your timezone.
+
+✦ KEY FEATURES
+
+• DST-Aware Conversion
+Uses the browser's built-in IANA timezone database (via the Intl API) to handle Daylight Saving Time transitions automatically. No outdated offset tables — the conversion is always correct for the specific date.
+
+• Smart Date Inference
+Reads the post's timestamp from the page (e.g. the tweet's datetime on X) and understands relative date words like "tomorrow", "tonight", "next Monday". If a tweet posted on March 31 says "Tomorrow night at 9PM ET", the extension correctly resolves this to April 1, 9PM ET.
+
+• Inline Badge Display
+Converted times appear as compact blue badges right after the original time text. Hover for details including DST status and timezone info.
+
+• Same Timezone Skip
+If your local timezone matches the source timezone, no badge is shown — keeping the page clean.
+
+• Dynamic Content Support
+Works with single-page apps (SPAs) like X/Twitter. New content loaded via infinite scroll is automatically scanned.
+
+✦ SUPPORTED FORMATS
+• 12-hour: 9PM ET, 3:00 PM PST, 11:45am Pacific Time
+• 24-hour: 15:00 GMT, 09:15 CET
+• City names: 9PM London time, 3PM Tokyo time
+• 50+ timezone abbreviations: ET, EST, EDT, PT, PST, PDT, GMT, BST, CET, CEST, JST, KST, AEST, and more
+
+✦ PRIVACY
+This extension runs entirely locally. No data is sent to any server. No analytics, no tracking.
+
+By Star — https://x.com/starzq
+GitHub: https://github.com/star23/time-converter
