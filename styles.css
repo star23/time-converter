@@ -1,0 +1,28 @@
+.tz-converter-wrapper {
+  position: relative;
+  display: inline;
+}
+
+.tz-converter-original {
+  /* keep original styling */
+}
+
+.tz-converter-tooltip {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 6px;
+  background: #1a73e8;
+  color: #fff;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: default;
+  vertical-align: baseline;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.tz-converter-tooltip:hover {
+  background: #1557b0;
+}
