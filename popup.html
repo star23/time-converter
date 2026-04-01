@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 16px;
+      color: #202124;
+      background: #fff;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .header svg { flex-shrink: 0; }
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+    }
+    .info-label {
+      font-size: 13px;
+      color: #5f6368;
+    }
+    .info-value {
+      font-size: 13px;
+      font-weight: 500;
+      color: #202124;
+    }
+    .dst-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .dst-yes {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+    .dst-no {
+      background: #f3e8fd;
+      color: #7b1fa2;
+    }
+    .section-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #5f6368;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 16px;
+      margin-bottom: 8px;
+    }
+    .current-time {
+      font-size: 28px;
+      font-weight: 300;
+      color: #1a73e8;
+      padding: 8px 0;
+    }
+    .tz-name {
+      font-size: 12px;
+      color: #5f6368;
+      margin-top: -4px;
+      margin-bottom: 12px;
+    }
+    .footer {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid #e0e0e0;
+      font-size: 11px;
+      color: #9aa0a6;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="10" stroke="#1a73e8" stroke-width="2"/>
+      <path d="M12 6v6l4 2" stroke="#1a73e8" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <h1>Time Zone Converter</h1>
+  </div>
+
+  <div class="current-time" id="currentTime">--:--</div>
+  <div class="tz-name" id="tzName">--</div>
+
+  <div class="info-row">
+    <span class="info-label">Your Timezone</span>
+    <span class="info-value" id="localTz">--</span>
+  </div>
+
+  <div class="info-row">
+    <span class="info-label">UTC Offset</span>
+    <span class="info-value" id="utcOffset">--</span>
+  </div>
+
+  <div class="info-row">
+    <span class="info-label">Daylight Saving</span>
+    <span class="info-value" id="dstStatus">--</span>
+  </div>
+
+  <div class="section-title">How it works</div>
+  <div style="font-size: 12px; color: #5f6368; line-height: 1.6;">
+    This extension automatically detects time mentions (e.g. "9PM ET", "3:00 PM PST")
+    on web pages and shows the converted time in your local timezone.
+    DST transitions are handled automatically using the IANA timezone database.
+  </div>
+
+  <div class="footer">
+    Time Zone Converter v1.0 &middot; IANA tz via Intl API
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
