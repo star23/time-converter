@@ -120,23 +120,6 @@
       hour12: true,
     });
 
-    const localDate = bestDate.toLocaleDateString('en-US', {
-      timeZone: LOCAL_TZ,
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-    });
-
-    const sourceDate = bestDate.toLocaleDateString('en-US', {
-      timeZone: sourceTzIana,
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-    });
-
-    // Check if dates differ (crossing midnight)
-    const dateSuffix = localDate !== sourceDate ? ` (${localDate})` : '';
-
     // Get the local timezone abbreviation
     const localTzAbbr = getTimezoneAbbr(LOCAL_TZ, bestDate);
 
@@ -146,7 +129,6 @@
     return {
       localTime: localFormatted,
       localTzAbbr,
-      dateSuffix,
       localTz: LOCAL_TZ,
       isDST,
       utcDate: bestDate,
@@ -323,8 +305,8 @@
         badge.className = TOOLTIP_CLASS;
 
         const dstNote = result.isDST ? ' (DST)' : '';
-        badge.textContent = `${result.localTime} ${result.localTzAbbr}${result.dateSuffix}`;
-        badge.title = `Converted from ${m.ianaZone}${dstNote} to ${result.localTz}\nYour local time: ${result.localTime} ${result.localTzAbbr}${result.dateSuffix}`;
+        badge.textContent = `${result.localTime} ${result.localTzAbbr}`;
+        badge.title = `Converted from ${m.ianaZone}${dstNote} to ${result.localTz}\nYour local time: ${result.localTime} ${result.localTzAbbr}`;
 
         wrapper.appendChild(badge);
         frag.appendChild(wrapper);
