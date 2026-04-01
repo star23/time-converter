@@ -68,13 +68,110 @@
     'gi'
   );
 
+  // Relative date keywords regex
+  const RELATIVE_DATE_PATTERN = /\b(today|tonight|this\s+(?:evening|afternoon|morning)|tomorrow(?:\s+(?:night|evening|morning|afternoon))?|yesterday|next\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i;
+
+  const WEEKDAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+  /**
+   * Find the nearest <time datetime="..."> element by walking up the DOM.
+   * On X/Twitter, tweets are wrapped in <article> elements containing a <time>.
+   */
+  function findPostTimestamp(element) {
+    let current = element;
+    for (let i = 0; i < 15 && current && current !== document.body; i++) {
+      const timeEl = current.querySelector && current.querySelector('time[datetime]');
+      if (timeEl) {
+        const d = new Date(timeEl.getAttribute('datetime'));
+        if (!isNaN(d.getTime())) return d;
+      }
+      if (current.tagName === 'ARTICLE') {
+        // On X, don't go above the article boundary
+        break;
+      }
+      current = current.parentElement;
+    }
+    return null;
+  }
+
+  /**
+   * Get surrounding text content for relative date word detection.
+   * Walks up to the nearest block-level ancestor to capture context like
+   * "Tomorrow night at 9PM ET" even if split across DOM nodes.
+   */
+  function getSurroundingText(textNode) {
+    let el = textNode.parentElement;
+    // Walk up to a reasonable container (max 5 levels)
+    for (let i = 0; i < 5 && el; i++) {
+      const text = el.textContent || '';
+      if (text.length > 20) return text.slice(0, 500);
+      el = el.parentElement;
+    }
+    return textNode.textContent || '';
+  }
+
+  /**
+   * Parse relative date words and resolve them against the post timestamp
+   * in the SOURCE timezone (not UTC, not local).
+   *
+   * Example: post at UTC 2026-03-31T23:48 → in ET (EDT, UTC-4) = March 31
+   *          "Tomorrow" → March 31 + 1 = April 1 (in ET)
+   *
+   * Returns { year, month, day } in the source timezone, or null.
+   */
+  function parseRelativeDateWord(text, postDate, sourceTzIana) {
+    const match = RELATIVE_DATE_PATTERN.exec(text);
+    if (!match) return null;
+
+    const keyword = match[1].toLowerCase().replace(/\s+/g, ' ');
+
+    // Get the post's calendar date in the SOURCE timezone
+    const postDateStr = postDate.toLocaleDateString('en-CA', { timeZone: sourceTzIana });
+    const [pYear, pMonth, pDay] = postDateStr.split('-').map(Number);
+
+    // Create a date object for arithmetic (using UTC to avoid local TZ interference)
+    const baseDate = new Date(Date.UTC(pYear, pMonth - 1, pDay));
+
+    let dayOffset = 0;
+
+    if (keyword === 'today' || keyword === 'tonight' ||
+        keyword.startsWith('this ')) {
+      dayOffset = 0;
+    } else if (keyword.startsWith('tomorrow')) {
+      dayOffset = 1;
+    } else if (keyword === 'yesterday') {
+      dayOffset = -1;
+    } else if (keyword.startsWith('next ')) {
+      const targetDay = keyword.split(' ')[1];
+      const targetIdx = WEEKDAY_NAMES.indexOf(targetDay);
+      if (targetIdx === -1) return null;
+      const currentIdx = baseDate.getUTCDay();
+      dayOffset = ((targetIdx - currentIdx + 7) % 7) || 7; // always 1-7 days forward
+    } else {
+      return null;
+    }
+
+    baseDate.setUTCDate(baseDate.getUTCDate() + dayOffset);
+
+    return {
+      year: baseDate.getUTCFullYear(),
+      month: baseDate.getUTCMonth() + 1,
+      day: baseDate.getUTCDate(),
+    };
+  }
+
   /**
    * Convert a detected time to the user's local timezone.
    * Uses the Intl API which internally uses the IANA timezone database,
    * so DST is handled correctly based on the actual date.
+   *
+   * @param {string} hour
+   * @param {string} minute
+   * @param {string|null} ampm
+   * @param {string} sourceTzIana - IANA timezone of the source time
+   * @param {{year:number, month:number, day:number}|null} eventDate - resolved event date in source TZ
    */
-  function convertTime(hour, minute, ampm, sourceTzIana) {
-    const now = new Date();
+  function convertTime(hour, minute, ampm, sourceTzIana, eventDate) {
     let h = parseInt(hour, 10);
     const m = parseInt(minute || '0', 10);
 
@@ -84,30 +181,33 @@
       if ((ap === 'AM' || ap === 'A') && h === 12) h = 0;
     }
 
-    // Build a date in the source timezone.
-    // Strategy: try today and tomorrow (for "tomorrow night at 9PM" contexts).
-    // We construct the date by using the source timezone offset.
-    const candidates = [0, 1, -1]; // today, tomorrow, yesterday
     let bestDate = null;
 
-    for (const dayOffset of candidates) {
-      const d = new Date(now);
-      d.setDate(d.getDate() + dayOffset);
+    if (eventDate) {
+      // We have a resolved event date — use it directly
+      const isoStr = `${eventDate.year}-${String(eventDate.month).padStart(2, '0')}-${String(eventDate.day).padStart(2, '0')}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+      bestDate = findUTCForLocalTime(isoStr, sourceTzIana);
+    } else {
+      // Fallback: try today, tomorrow, yesterday relative to now
+      const now = new Date();
+      const candidates = [0, 1, -1];
 
-      // Format the date parts in the source timezone to find the right UTC time
-      const dateStr = d.toLocaleDateString('en-CA', { timeZone: sourceTzIana });
-      const [year, month, day] = dateStr.split('-').map(Number);
+      for (const dayOffset of candidates) {
+        const d = new Date(now);
+        d.setDate(d.getDate() + dayOffset);
 
-      // Create the date string and parse it
-      const isoStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+        const dateStr = d.toLocaleDateString('en-CA', { timeZone: sourceTzIana });
+        const [year, month, day] = dateStr.split('-').map(Number);
 
-      // Find UTC time that corresponds to this local time in source timezone
-      const utcDate = findUTCForLocalTime(isoStr, sourceTzIana);
-      if (utcDate && dayOffset === 0) {
-        bestDate = utcDate;
-        break;
+        const isoStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+
+        const utcDate = findUTCForLocalTime(isoStr, sourceTzIana);
+        if (utcDate && dayOffset === 0) {
+          bestDate = utcDate;
+          break;
+        }
+        if (!bestDate && utcDate) bestDate = utcDate;
       }
-      if (!bestDate && utcDate) bestDate = utcDate;
     }
 
     if (!bestDate) return null;
@@ -120,6 +220,14 @@
       hour12: true,
     });
 
+    // Get the local date string for badge display
+    const localDateStr = bestDate.toLocaleDateString('en-US', {
+      timeZone: LOCAL_TZ,
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+
     // Get the local timezone abbreviation
     const localTzAbbr = getTimezoneAbbr(LOCAL_TZ, bestDate);
 
@@ -130,6 +238,7 @@
       localTime: localFormatted,
       localTzAbbr,
       localTz: LOCAL_TZ,
+      localDateStr,
       isDST,
       utcDate: bestDate,
     };
@@ -280,6 +389,30 @@
     // Sort by position
     matches.sort((a, b) => a.start - b.start);
 
+    // --- Date inference ---
+    // Extract post timestamp from nearby <time> element (e.g. on X/Twitter)
+    const postTimestamp = findPostTimestamp(textNode.parentElement);
+    // Get surrounding text to search for relative date words ("tomorrow", etc.)
+    const surroundingText = postTimestamp ? getSurroundingText(textNode) : '';
+
+    for (const m of matches) {
+      let eventDate = null;
+      if (postTimestamp) {
+        // Try to find a relative date word and resolve it in the SOURCE timezone
+        eventDate = parseRelativeDateWord(surroundingText, postTimestamp, m.ianaZone);
+        if (!eventDate) {
+          // No relative word — use the post's date in source TZ as fallback
+          const dateStr = postTimestamp.toLocaleDateString('en-CA', { timeZone: m.ianaZone });
+          const [year, month, day] = dateStr.split('-').map(Number);
+          eventDate = { year, month, day };
+        }
+      }
+      m.eventDate = eventDate;
+    }
+
+    // Today's date in local timezone (for deciding whether to show date in badge)
+    const todayLocal = new Date().toLocaleDateString('en-CA', { timeZone: LOCAL_TZ });
+
     // Build replacement fragment
     const frag = document.createDocumentFragment();
     let lastIndex = 0;
@@ -290,7 +423,7 @@
         frag.appendChild(document.createTextNode(text.slice(lastIndex, m.start)));
       }
 
-      const result = convertTime(m.hour, m.minute, m.ampm, m.ianaZone);
+      const result = convertTime(m.hour, m.minute, m.ampm, m.ianaZone, m.eventDate);
       if (result) {
         const wrapper = document.createElement('span');
         wrapper.className = WRAPPER_CLASS;
@@ -305,8 +438,11 @@
         badge.className = TOOLTIP_CLASS;
 
         const dstNote = result.isDST ? ' (DST)' : '';
-        badge.textContent = `${result.localTime} ${result.localTzAbbr}`;
-        badge.title = `Converted from ${m.ianaZone}${dstNote} to ${result.localTz}\nYour local time: ${result.localTime} ${result.localTzAbbr}`;
+        // Show date only when the event is not today in the user's local timezone
+        const eventLocal = result.utcDate.toLocaleDateString('en-CA', { timeZone: LOCAL_TZ });
+        const dateSuffix = (eventLocal !== todayLocal) ? ` ${result.localDateStr}` : '';
+        badge.textContent = `${result.localTime} ${result.localTzAbbr}${dateSuffix}`;
+        badge.title = `Converted from ${m.ianaZone}${dstNote} to ${result.localTz}\nYour local time: ${result.localTime} ${result.localTzAbbr}${dateSuffix}`;
 
         wrapper.appendChild(badge);
         frag.appendChild(wrapper);
