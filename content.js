@@ -319,6 +319,16 @@
     return TIMEZONE_MAP[upper] || CITY_TIMEZONE_MAP[upper] || null;
   }
 
+  /**
+   * Check if two IANA timezones are effectively the same right now
+   * (same UTC offset), so we can skip showing the badge.
+   */
+  function isSameTimezone(tz1, tz2) {
+    if (tz1 === tz2) return true;
+    const now = new Date();
+    return getTimezoneOffset(tz1, now) === getTimezoneOffset(tz2, now);
+  }
+
   // --- DOM scanning and annotation ---
 
   const PROCESSED_ATTR = 'data-tz-converted';
@@ -346,7 +356,7 @@
       const tzKey = match[4] || match[5];
       const ianaZone = resolveTimezone(tzKey);
       if (!ianaZone) continue;
-      if (ianaZone === LOCAL_TZ) continue; // skip if same as local
+      if (isSameTimezone(ianaZone, LOCAL_TZ)) continue;
 
       matches.push({
         start: match.index,
@@ -365,7 +375,7 @@
       const tzKey = match[3] || match[4];
       const ianaZone = resolveTimezone(tzKey);
       if (!ianaZone) continue;
-      if (ianaZone === LOCAL_TZ) continue;
+      if (isSameTimezone(ianaZone, LOCAL_TZ)) continue;
 
       // Check overlap with existing matches
       const overlaps = matches.some(m =>
