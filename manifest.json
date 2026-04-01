@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Time Zone Converter",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Automatically detects time mentions on web pages and converts them to your local timezone with proper DST handling.",
-  "permissions": ["storage"],
+  "permissions": [],
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
