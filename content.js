@@ -68,6 +68,43 @@
     'gi'
   );
 
+  /**
+   * Explicit-offset timezone patterns: "9PM GMT+5", "8:00 UTC-3", "15:00 GMT+05:30".
+   * These must match BEFORE TIME_PATTERN / TIME_24H_PATTERN so that "GMT+5" isn't
+   * truncated to "GMT" (which would map to Europe/London and give the wrong result).
+   *
+   * Groups (12-hour): 1=hour 2=min? 3=am/pm 4=+/- 5=offHours 6=offMin?
+   * Groups (24-hour): 1=hour 2=min 3=+/- 4=offHours 5=offMin?
+   */
+  const OFFSET_PATTERN_12H = new RegExp(
+    '\\b' +
+    '(1[0-2]|0?[1-9])' +
+    '(?:\\s*[:：]\\s*(\\d{2}))?' +
+    '\\s*' +
+    '([AaPp][Mm]?)' +
+    '\\s+' +
+    '(?:GMT|UTC)' +
+    '\\s*([+\\-−])\\s*' +
+    '(\\d{1,2})' +
+    '(?:\\s*[:：]\\s*(\\d{2}))?' +
+    '(?!\\d)',
+    'gi'
+  );
+
+  const OFFSET_PATTERN_24H = new RegExp(
+    '\\b' +
+    '([01]?\\d|2[0-3])' +
+    '\\s*[:：]\\s*' +
+    '(\\d{2})' +
+    '\\s+' +
+    '(?:GMT|UTC)' +
+    '\\s*([+\\-−])\\s*' +
+    '(\\d{1,2})' +
+    '(?:\\s*[:：]\\s*(\\d{2}))?' +
+    '(?!\\d)',
+    'gi'
+  );
+
   // Relative date keywords regex
   const RELATIVE_DATE_PATTERN = /\b(today|tonight|this\s+(?:evening|afternoon|morning)|tomorrow(?:\s+(?:night|evening|morning|afternoon))?|yesterday|next\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i;
 
@@ -119,15 +156,25 @@
    *
    * Returns { year, month, day } in the source timezone, or null.
    */
-  function parseRelativeDateWord(text, postDate, sourceTzIana) {
+  function parseRelativeDateWord(text, postDate, sourceTzIana, offsetMinutes) {
     const match = RELATIVE_DATE_PATTERN.exec(text);
     if (!match) return null;
 
     const keyword = match[1].toLowerCase().replace(/\s+/g, ' ');
 
     // Get the post's calendar date in the SOURCE timezone
-    const postDateStr = postDate.toLocaleDateString('en-CA', { timeZone: sourceTzIana });
-    const [pYear, pMonth, pDay] = postDateStr.split('-').map(Number);
+    let pYear, pMonth, pDay;
+    if (typeof offsetMinutes === 'number') {
+      // Fixed offset — shift UTC by offset to get source-local date
+      const srcMs = postDate.getTime() + offsetMinutes * 60000;
+      const srcDate = new Date(srcMs);
+      pYear = srcDate.getUTCFullYear();
+      pMonth = srcDate.getUTCMonth() + 1;
+      pDay = srcDate.getUTCDate();
+    } else {
+      const postDateStr = postDate.toLocaleDateString('en-CA', { timeZone: sourceTzIana });
+      [pYear, pMonth, pDay] = postDateStr.split('-').map(Number);
+    }
 
     // Create a date object for arithmetic (using UTC to avoid local TZ interference)
     const baseDate = new Date(Date.UTC(pYear, pMonth - 1, pDay));
@@ -168,10 +215,11 @@
    * @param {string} hour
    * @param {string} minute
    * @param {string|null} ampm
-   * @param {string} sourceTzIana - IANA timezone of the source time
+   * @param {string|null} sourceTzIana - IANA timezone (null when offsetMinutes is used)
    * @param {{year:number, month:number, day:number}|null} eventDate - resolved event date in source TZ
+   * @param {number|null} offsetMinutes - fixed UTC offset in minutes (for "GMT+5" style)
    */
-  function convertTime(hour, minute, ampm, sourceTzIana, eventDate) {
+  function convertTime(hour, minute, ampm, sourceTzIana, eventDate, offsetMinutes) {
     let h = parseInt(hour, 10);
     const m = parseInt(minute || '0', 10);
 
@@ -183,7 +231,24 @@
 
     let bestDate = null;
 
-    if (eventDate) {
+    if (typeof offsetMinutes === 'number') {
+      // Fixed-offset source (e.g. GMT+5) — no DST, direct arithmetic
+      let year, month, day;
+      if (eventDate) {
+        year = eventDate.year;
+        month = eventDate.month;
+        day = eventDate.day;
+      } else {
+        // Default: today's date in the source offset
+        const nowSrc = new Date(Date.now() + offsetMinutes * 60000);
+        year = nowSrc.getUTCFullYear();
+        month = nowSrc.getUTCMonth() + 1;
+        day = nowSrc.getUTCDate();
+      }
+      // Local time (h:m) at offset X → UTC = (h:m) − X
+      const utcMs = Date.UTC(year, month - 1, day, h, m) - offsetMinutes * 60000;
+      bestDate = new Date(utcMs);
+    } else if (eventDate) {
       // We have a resolved event date — use it directly
       const isoStr = `${eventDate.year}-${String(eventDate.month).padStart(2, '0')}-${String(eventDate.day).padStart(2, '0')}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
       bestDate = findUTCForLocalTime(isoStr, sourceTzIana);
@@ -231,8 +296,8 @@
     // Get the local timezone abbreviation
     const localTzAbbr = getTimezoneAbbr(LOCAL_TZ, bestDate);
 
-    // Check if source is in DST
-    const isDST = isInDST(sourceTzIana, bestDate);
+    // Check if source is in DST (fixed offsets never have DST)
+    const isDST = sourceTzIana ? isInDST(sourceTzIana, bestDate) : false;
 
     return {
       localTime: localFormatted,
@@ -348,15 +413,70 @@
         parent.tagName === 'NOSCRIPT' || parent.isContentEditable) return;
 
     const matches = [];
+    const localOffsetMinutes = -new Date().getTimezoneOffset();
+
+    const overlapsExisting = (start, end) =>
+      matches.some(mm => start < mm.end && end > mm.start);
+
+    const buildOffsetLabel = (sign, oh, om) => {
+      const signCh = sign < 0 ? '-' : '+';
+      const hh = String(Math.abs(oh)).padStart(2, '0');
+      return om ? `GMT${signCh}${hh}:${String(om).padStart(2, '0')}` : `GMT${signCh}${hh}`;
+    };
+
+    let match;
+
+    // --- Explicit offset patterns FIRST (e.g. "GMT+5", "UTC-3") ---
+    // Must run before TIME_PATTERN so "9PM GMT+5" isn't truncated to "9PM GMT".
+    OFFSET_PATTERN_12H.lastIndex = 0;
+    while ((match = OFFSET_PATTERN_12H.exec(text)) !== null) {
+      const sign = (match[4] === '-' || match[4] === '−') ? -1 : 1;
+      const oh = parseInt(match[5], 10);
+      const om = match[6] ? parseInt(match[6], 10) : 0;
+      const offsetMinutes = sign * (oh * 60 + om);
+      if (offsetMinutes === localOffsetMinutes) continue;
+
+      matches.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        fullMatch: match[0],
+        hour: match[1],
+        minute: match[2] || '00',
+        ampm: match[3],
+        offsetMinutes,
+        offsetLabel: buildOffsetLabel(sign, oh, om),
+      });
+    }
+
+    OFFSET_PATTERN_24H.lastIndex = 0;
+    while ((match = OFFSET_PATTERN_24H.exec(text)) !== null) {
+      const sign = (match[3] === '-' || match[3] === '−') ? -1 : 1;
+      const oh = parseInt(match[4], 10);
+      const om = match[5] ? parseInt(match[5], 10) : 0;
+      const offsetMinutes = sign * (oh * 60 + om);
+      if (offsetMinutes === localOffsetMinutes) continue;
+      if (overlapsExisting(match.index, match.index + match[0].length)) continue;
+
+      matches.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        fullMatch: match[0],
+        hour: match[1],
+        minute: match[2],
+        ampm: null,
+        offsetMinutes,
+        offsetLabel: buildOffsetLabel(sign, oh, om),
+      });
+    }
 
     // 12-hour format
-    let match;
     TIME_PATTERN.lastIndex = 0;
     while ((match = TIME_PATTERN.exec(text)) !== null) {
       const tzKey = match[4] || match[5];
       const ianaZone = resolveTimezone(tzKey);
       if (!ianaZone) continue;
       if (isSameTimezone(ianaZone, LOCAL_TZ)) continue;
+      if (overlapsExisting(match.index, match.index + match[0].length)) continue;
 
       matches.push({
         start: match.index,
@@ -376,12 +496,7 @@
       const ianaZone = resolveTimezone(tzKey);
       if (!ianaZone) continue;
       if (isSameTimezone(ianaZone, LOCAL_TZ)) continue;
-
-      // Check overlap with existing matches
-      const overlaps = matches.some(m =>
-        match.index < m.end && match.index + match[0].length > m.start
-      );
-      if (overlaps) continue;
+      if (overlapsExisting(match.index, match.index + match[0].length)) continue;
 
       matches.push({
         start: match.index,
@@ -389,7 +504,7 @@
         fullMatch: match[0],
         hour: match[1],
         minute: match[2],
-        ampm: null, // 24h format
+        ampm: null,
         ianaZone,
       });
     }
@@ -409,12 +524,22 @@
       let eventDate = null;
       if (postTimestamp) {
         // Try to find a relative date word and resolve it in the SOURCE timezone
-        eventDate = parseRelativeDateWord(surroundingText, postTimestamp, m.ianaZone);
+        eventDate = parseRelativeDateWord(surroundingText, postTimestamp, m.ianaZone, m.offsetMinutes);
         if (!eventDate) {
-          // No relative word — use the post's date in source TZ as fallback
-          const dateStr = postTimestamp.toLocaleDateString('en-CA', { timeZone: m.ianaZone });
-          const [year, month, day] = dateStr.split('-').map(Number);
-          eventDate = { year, month, day };
+          // No relative word — use the post's date in source TZ/offset as fallback
+          if (typeof m.offsetMinutes === 'number') {
+            const srcMs = postTimestamp.getTime() + m.offsetMinutes * 60000;
+            const srcDate = new Date(srcMs);
+            eventDate = {
+              year: srcDate.getUTCFullYear(),
+              month: srcDate.getUTCMonth() + 1,
+              day: srcDate.getUTCDate(),
+            };
+          } else {
+            const dateStr = postTimestamp.toLocaleDateString('en-CA', { timeZone: m.ianaZone });
+            const [year, month, day] = dateStr.split('-').map(Number);
+            eventDate = { year, month, day };
+          }
         }
       }
       m.eventDate = eventDate;
@@ -433,7 +558,7 @@
         frag.appendChild(document.createTextNode(text.slice(lastIndex, m.start)));
       }
 
-      const result = convertTime(m.hour, m.minute, m.ampm, m.ianaZone, m.eventDate);
+      const result = convertTime(m.hour, m.minute, m.ampm, m.ianaZone || null, m.eventDate, m.offsetMinutes);
       if (result) {
         const wrapper = document.createElement('span');
         wrapper.className = WRAPPER_CLASS;
@@ -451,8 +576,9 @@
         // Show date only when the event is not today in the user's local timezone
         const eventLocal = result.utcDate.toLocaleDateString('en-CA', { timeZone: LOCAL_TZ });
         const dateSuffix = (eventLocal !== todayLocal) ? ` ${result.localDateStr}` : '';
+        const sourceLabel = m.ianaZone || m.offsetLabel;
         badge.textContent = `${result.localTime} ${result.localTzAbbr}${dateSuffix}`;
-        badge.title = `Converted from ${m.ianaZone}${dstNote} to ${result.localTz}\nYour local time: ${result.localTime} ${result.localTzAbbr}${dateSuffix}`;
+        badge.title = `Converted from ${sourceLabel}${dstNote} to ${result.localTz}\nYour local time: ${result.localTime} ${result.localTzAbbr}${dateSuffix}`;
 
         wrapper.appendChild(badge);
         frag.appendChild(wrapper);
